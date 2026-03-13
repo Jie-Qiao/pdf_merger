@@ -25,31 +25,43 @@ class DragDropListWidget(QListWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self.setDragDropMode(QAbstractItemView.InternalMove)
+        # 修改为 DragDrop 模式，同时支持外部拖入和内部移动
+        self.setDragDropMode(QAbstractItemView.DragDrop)
+        self.setDefaultDropAction(Qt.MoveAction) # 内部默认动作为移动
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
+        # 1. 如果是内部拖拽排序，交回给系统默认逻辑处理
+        if event.source() == self:
+            super().dragEnterEvent(event)
+        # 2. 如果是从外部拖入文件/文件夹
+        elif event.mimeData().hasUrls():
             event.accept()
         else:
             event.ignore()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasUrls():
+        if event.source() == self:
+            super().dragMoveEvent(event)
+        elif event.mimeData().hasUrls():
             event.setDropAction(Qt.CopyAction)
             event.accept()
         else:
             event.ignore()
 
     def dropEvent(self, event):
-        if event.mimeData().hasUrls():
+        # 1. 处理内部拖拽排序
+        if event.source() == self:
+            super().dropEvent(event)
+        # 2. 处理外部文件拖入
+        elif event.mimeData().hasUrls():
             event.setDropAction(Qt.CopyAction)
             event.accept()
             for url in event.mimeData().urls():
                 if url.isLocalFile():
                     path = str(url.toLocalFile())
                     
-                    # 如果是文件夹，遍历里面的所有子文件夹和文件
+                    # 文件夹递归处理
                     if os.path.isdir(path):
                         for root, dirs, files in os.walk(path):
                             for file in files:
@@ -57,8 +69,8 @@ class DragDropListWidget(QListWidget):
                                 if ext in SUPPORTED_EXTS:
                                     full_path = os.path.join(root, file)
                                     self._add_item_if_unique(full_path)
+                    # 单文件处理
                     else:
-                        # 如果是单个文件，检查扩展名后添加
                         ext = os.path.splitext(path)[1].lower()
                         if ext in SUPPORTED_EXTS:
                             self._add_item_if_unique(path)
