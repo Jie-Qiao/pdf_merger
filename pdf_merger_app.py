@@ -16,6 +16,10 @@ try:
 except ImportError:
     HAS_EASYOFD = False
 
+# 全局定义支持的扩展名，方便拖拽文件夹时进行过滤
+SUPPORTED_EXTS = ['.docx', '.doc', '.xlsx', '.xls', '.ppt', '.pptx', 
+                  '.jpg', '.jpeg', '.png', '.bmp', '.ofd', '.pdf']
+
 class DragDropListWidget(QListWidget):
     """支持拖拽的列表组件"""
     def __init__(self, parent=None):
@@ -43,13 +47,29 @@ class DragDropListWidget(QListWidget):
             event.accept()
             for url in event.mimeData().urls():
                 if url.isLocalFile():
-                    file_path = str(url.toLocalFile())
-                    # 避免重复添加
-                    items = [self.item(i).text() for i in range(self.count())]
-                    if file_path not in items:
-                        self.addItem(file_path)
+                    path = str(url.toLocalFile())
+                    
+                    # 如果是文件夹，遍历里面的所有子文件夹和文件
+                    if os.path.isdir(path):
+                        for root, dirs, files in os.walk(path):
+                            for file in files:
+                                ext = os.path.splitext(file)[1].lower()
+                                if ext in SUPPORTED_EXTS:
+                                    full_path = os.path.join(root, file)
+                                    self._add_item_if_unique(full_path)
+                    else:
+                        # 如果是单个文件，检查扩展名后添加
+                        ext = os.path.splitext(path)[1].lower()
+                        if ext in SUPPORTED_EXTS:
+                            self._add_item_if_unique(path)
         else:
             event.ignore()
+
+    def _add_item_if_unique(self, file_path):
+        """避免重复添加文件的辅助方法"""
+        items = [self.item(i).text() for i in range(self.count())]
+        if file_path not in items:
+            self.addItem(file_path)
 
 class PDFMergerApp(QWidget):
     def __init__(self):
@@ -62,8 +82,8 @@ class PDFMergerApp(QWidget):
         self.resize(550, 450)
         layout = QVBoxLayout()
 
-        # 提示标签
-        self.label = QLabel("请将 Word, Excel, 图片 或 OFD 文件拖入下方列表中\n(拖动可排序，按 Delete 键删除)")
+        # 提示标签 (更新了文案，加入了 PPT 和文件夹提示)
+        self.label = QLabel("请将 Word, Excel, PPT, 图片 或 OFD 的 文件/文件夹 拖入下方列表中\n(拖动可排序，按 Delete 键删除)")
         self.label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.label)
 
@@ -148,6 +168,8 @@ class PDFMergerApp(QWidget):
                     self.convert_word(file_path, temp_pdf)
                 elif ext in ['.xlsx', '.xls']:
                     self.convert_excel(file_path, temp_pdf)
+                elif ext in ['.ppt', '.pptx']: # 新增 PPT 分支
+                    self.convert_powerpoint(file_path, temp_pdf)
                 elif ext in ['.jpg', '.jpeg', '.png', '.bmp']:
                     self.convert_image(file_path, temp_pdf)
                 elif ext == '.ofd':
@@ -180,65 +202,88 @@ class PDFMergerApp(QWidget):
             self.btn_generate.setEnabled(True)
 
     # --- 各种格式转换核心逻辑 ---
-    def convert_word(self, input_path, output_path):
-            app = None
+    
+    def convert_powerpoint(self, input_path, output_path):
+        """新增：PowerPoint转PDF逻辑"""
+        app = None
+        presentation = None
+        try:
+            # 1. 优先尝试启动 Microsoft PowerPoint
             try:
-                # 1. 优先尝试启动 Microsoft Word
+                app = win32com.client.DispatchEx("PowerPoint.Application")
+            except:
+                # 2. 尝试 WPS 演示
                 try:
-                    app = win32com.client.DispatchEx("Word.Application")
+                    app = win32com.client.DispatchEx("kwpp.Application")
                 except:
-                    # 2. 如果失败，尝试启动 WPS 文字
-                    app = win32com.client.DispatchEx("kwps.Application")
-                
-                app.Visible = False
-                app.DisplayAlerts = 0
-                doc = app.Documents.Open(os.path.abspath(input_path), ReadOnly=True)
-                # 17 是导出为 PDF 的标准代码，WPS 也通用
-                doc.SaveAs(os.path.abspath(output_path), FileFormat=17)
-                doc.Close()
-            finally:
-                if app:
-                    app.Quit()
+                    app = win32com.client.DispatchEx("WPP.Application")
+            
+            # 打开 PPT：ReadOnly=1 (True), Untitled=0 (False), WithWindow=0 (False)
+            # 以免弹出不需要的前台窗口
+            presentation = app.Presentations.Open(os.path.abspath(input_path), 1, 0, 0)
+            
+            # 32 是导出为 PDF 的标准代码 (ppSaveAsPDF)
+            presentation.SaveAs(os.path.abspath(output_path), 32)
+        finally:
+            if presentation:
+                presentation.Close()
+            if app:
+                app.Quit()
+
+    def convert_word(self, input_path, output_path):
+        app = None
+        try:
+            # 1. 优先尝试启动 Microsoft Word
+            try:
+                app = win32com.client.DispatchEx("Word.Application")
+            except:
+                # 2. 如果失败，尝试启动 WPS 文字
+                app = win32com.client.DispatchEx("kwps.Application")
+            
+            app.Visible = False
+            app.DisplayAlerts = 0
+            doc = app.Documents.Open(os.path.abspath(input_path), ReadOnly=True)
+            # 17 是导出为 PDF 的标准代码，WPS 也通用
+            doc.SaveAs(os.path.abspath(output_path), FileFormat=17)
+            doc.Close()
+        finally:
+            if app:
+                app.Quit()
 
     def convert_excel(self, input_path, output_path):
-            app = None
+        app = None
+        try:
+            # 1. 优先尝试启动 Microsoft Excel
             try:
-                # 1. 优先尝试启动 Microsoft Excel
+                app = win32com.client.DispatchEx("Excel.Application")
+            except:
+                # 2. 如果失败，尝试启动 WPS 表格 (优先 ket，兼容老版 ET)
                 try:
-                    app = win32com.client.DispatchEx("Excel.Application")
+                    app = win32com.client.DispatchEx("ket.Application")
                 except:
-                    # 2. 如果失败，尝试启动 WPS 表格 (优先 ket，兼容老版 ET)
-                    try:
-                        app = win32com.client.DispatchEx("ket.Application")
-                    except:
-                        app = win32com.client.DispatchEx("ET.Application")
-                
-                app.Visible = False
-                app.DisplayAlerts = False 
-                wb = app.Workbooks.Open(os.path.abspath(input_path), ReadOnly=True)
-                
-                # --- 核心修复：解决 Excel 打印冗余页问题 ---
-                # 遍历所有工作表，强行设置打印缩放比例
-                for sheet in wb.Worksheets:
-                    try:
-                        # 关闭固定缩放比例
-                        sheet.PageSetup.Zoom = False
-                        # 强行将所有列宽压缩到 1 页宽内
-                        sheet.PageSetup.FitToPagesWide = 1
-                        # 高度不限制（False），让行数自然往下排，避免内容被压扁
-                        sheet.PageSetup.FitToPagesTall = False 
-                    except Exception:
-                        # 如果工作表被密码保护，可能会设置失败，这里直接跳过保护表
-                        pass
-                # -------------------------------------------
-                
-                wb.ExportAsFixedFormat(0, os.path.abspath(output_path))
-                
-                # SaveChanges=False 非常重要！因为修改了 PageSetup，不加这个关文件时会卡住弹窗问你要不要保存
-                wb.Close(SaveChanges=False) 
-            finally:
-                if app:
-                    app.Quit()
+                    app = win32com.client.DispatchEx("ET.Application")
+            
+            app.Visible = False
+            app.DisplayAlerts = False 
+            wb = app.Workbooks.Open(os.path.abspath(input_path), ReadOnly=True)
+            
+            # --- 核心修复：解决 Excel 打印冗余页问题 ---
+            for sheet in wb.Worksheets:
+                try:
+                    sheet.PageSetup.Zoom = False
+                    sheet.PageSetup.FitToPagesWide = 1
+                    sheet.PageSetup.FitToPagesTall = False 
+                except Exception:
+                    pass
+            # -------------------------------------------
+            
+            wb.ExportAsFixedFormat(0, os.path.abspath(output_path))
+            
+            # SaveChanges=False 非常重要！
+            wb.Close(SaveChanges=False) 
+        finally:
+            if app:
+                app.Quit()
 
     def convert_image(self, input_path, output_path):
         image = Image.open(input_path)
@@ -261,7 +306,6 @@ class PDFMergerApp(QWidget):
 
         with open(output_path, "wb") as f:
             f.write(pdf_bytes)
-
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
