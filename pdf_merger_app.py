@@ -7,8 +7,7 @@ from PIL import Image
 from pypdf import PdfWriter
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QListWidget, QLabel, QMessageBox, QAbstractItemView, QLineEdit, QFileDialog, QCheckBox)
-from PyQt5.QtCore import Qt
-
+from PyQt5.QtCore import Qt, QStandardPaths
 # 根据官方示例引入 OFD
 try:
     from easyofd.ofd import OFD
@@ -114,7 +113,7 @@ class PDFMergerApp(QWidget):
         # 1. 目录选择
         dir_layout = QHBoxLayout()
         self.dir_label = QLabel("输出目录:")
-        self.dir_input = QLineEdit(os.path.join(os.path.expanduser("~"), "Desktop")) # 默认桌面
+        self.dir_input = QLineEdit(QStandardPaths.writableLocation(QStandardPaths.DesktopLocation))
         self.dir_btn = QPushButton("选择...")
         self.dir_btn.clicked.connect(self.select_directory)
         dir_layout.addWidget(self.dir_label)
